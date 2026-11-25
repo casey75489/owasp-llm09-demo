@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OWASP LLM09:2026 — AI 知識庫資安互動體驗平台</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            slatebg: '#0b1120',
+            panel: '#111827',
+            card: '#1e293b',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #0b1120;
+      color: #f1f5f9;
+      font-family: 'Segoe UI', 'Noto Sans TC', 'Microsoft JhengHei', sans-serif;
+    }
+    .tab-btn.active {
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      color: #ffffff;
+      border-color: #38bdf8;
+      box-shadow: 0 0 18px rgba(56, 189, 248, 0.28);
+    }
+    .heatmap-grid {
+      display: grid;
+      grid-template-columns: repeat(16, minmax(0, 1fr));
+      gap: 3px;
+    }
+    .heatmap-cell {
+      height: 16px;
+      border-radius: 3px;
+      transition: transform 0.15s ease;
+    }
+    .heatmap-cell:hover {
+      transform: scale(1.25);
+      z-index: 10;
+    }
+    .pulse-danger {
+      box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.55), 0 0 22px rgba(244, 63, 94, 0.18);
+    }
+    .pulse-safe {
+      box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.5), 0 0 20px rgba(16, 185, 129, 0.14);
+    }
+    .tour-step {
+      transition: all 0.2s ease;
+    }
+    .tour-step.current {
+      border-color: rgba(56, 189, 248, 0.85);
+      background: rgba(14, 165, 233, 0.14);
+      box-shadow: 0 0 16px rgba(56, 189, 248, 0.18);
+    }
+    .tour-step.done {
+      border-color: rgba(16, 185, 129, 0.55);
+      background: rgba(16, 185, 129, 0.1);
+    }
+    pre, code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+  <!-- Top Header -->
+  <header class="border-b border-slate-800 bg-slate-950/95 backdrop-blur sticky top-0 z-30">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-sky-500/15 border border-sky-400/40 flex items-center justify-center text-sky-400 font-bold text-lg shrink-0">
+          09
+        </div>
+        <div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <h1 id="hdr-title" class="text-base sm:text-lg font-bold tracking-tight text-white">
+              企業 AI 知識庫資安互動實驗室
+            </h1>
+            <span id="hdr-badge" class="px-2 py-0.5 text-[11px] font-semibold rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40">
+              OWASP LLM09:2026
+            </span>
+          </div>
+          <p id="hdr-subtitle" class="text-xs text-slate-400">
+            透過 3 個生活化情境，親眼體驗企業 AI 助理為什麼會「洩密、被騙、還原個資」
+          </p>
+        </div>
+      </div>
+
+      <!-- Audience Mode Toggle + Explainer Toggle + Engine Badge -->
+      <div class="flex flex-wrap items-center gap-2">
+        <!-- Plain vs Technical Mode Switch -->
+        <div class="inline-flex rounded-lg bg-slate-900 border border-slate-700 p-0.5 text-xs">
+          <button id="audience-plain" onclick="setAudienceMode('plain')"
+            class="px-3 py-1.5 rounded-md font-semibold bg-sky-600 text-white transition">
+            💡 白話模式（一般觀眾）
+          </button>
+          <button id="audience-tech" onclick="setAudienceMode('tech')"
+            class="px-3 py-1.5 rounded-md font-semibold text-slate-400 hover:text-white transition">
+            ⚙️ 技術模式（工程師）
+          </button>
+        </div>
+
+        <button id="btn-toggle-explainer" onclick="toggleExplainer()"
+          class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-200 transition">
+          📖 30 秒看懂原理
+        </button>
+
+        <div id="engine-status" class="hidden xl:flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-300">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span>連線中...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scenario Navigation Tabs -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 pb-3 flex flex-wrap gap-2">
+      <button id="tab-a" onclick="switchTab('a')" class="tab-btn active px-4 py-2 rounded-lg text-sm font-semibold border border-slate-700 bg-slate-900 text-slate-300 hover:text-white transition">
+        🔓 劇本 A：AI 幫員工偷看老闆機密
+      </button>
+      <button id="tab-b" onclick="switchTab('b')" class="tab-btn px-4 py-2 rounded-lg text-sm font-semibold border border-slate-700 bg-slate-900 text-slate-300 hover:text-white transition">
+        🎭 劇本 B：假公告插隊，騙 AI 講詐騙帳號
+      </button>
+      <button id="tab-c" onclick="switchTab('c')" class="tab-btn px-4 py-2 rounded-lg text-sm font-semibold border border-slate-700 bg-slate-900 text-slate-300 hover:text-white transition">
+        🧩 劇本 C：亂碼數字竟能還原成機密原文
+      </button>
+    </div>
+  </header>
+
+  <main class="max-w-7xl w-full mx-auto px-4 sm:px-6 py-5 flex-1 space-y-5">
+    <!-- ==================== 30-SECOND VISUAL EXPLAINER ==================== -->
+    <section id="explainer-banner" class="rounded-2xl bg-gradient-to-r from-slate-900 via-sky-950/35 to-slate-900 border border-sky-500/35 p-5 space-y-4">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div class="inline-flex items-center gap-1.5 text-xs font-bold text-amber-300 uppercase tracking-wider">
+            <span>📖 30 秒生活化圖解</span>
+            <span class="text-slate-500">•</span>
+            <span class="text-sky-300">什麼是企業 AI 知識庫（RAG）與「向量」？</span>
+          </div>
+          <p class="text-sm text-slate-200 mt-1">
+            把企業 AI 想像成一位<strong class="text-white">「可以開書考試的圖書館小幫手」</strong>：公司把所有規章檔案翻譯成電腦懂的「座標數字（向量）」，按主題擺在書架上。員工發問時，AI 會先去書架抓出意思最像的 3 張紙條，再整理成回答！
+          </p>
+        </div>
+        <button onclick="toggleExplainer()" class="text-xs px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
+          收合圖解 ✕
+        </button>
+      </div>
+
+      <!-- 3-Step Flow Metaphor -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+        <div class="rounded-xl bg-slate-950/75 border border-slate-800 p-3.5 flex items-start gap-3">
+          <div class="w-8 h-8 rounded-lg bg-sky-500/20 text-sky-300 flex items-center justify-center font-bold shrink-0">1</div>
+          <div>
+            <div class="font-bold text-white">💬 員工在聊天室提問</div>
+            <div class="text-slate-400 mt-0.5">例如問：「今年調薪或報銷流程怎麼辦？」系統把問題也轉成一組語意座標。</div>
+          </div>
+        </div>
+        <div class="rounded-xl bg-slate-950/75 border border-slate-800 p-3.5 flex items-start gap-3">
+          <div class="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center font-bold shrink-0">2</div>
+          <div>
+            <div class="font-bold text-white">📚 AI 跑去檔案書架找最像的 3 份</div>
+            <div class="text-slate-400 mt-0.5">搜尋引擎只看「意思像不像」，<strong class="text-rose-300">天生不懂誰是老闆、誰是實習生，也不辨真假！</strong></div>
+          </div>
+        </div>
+        <div class="rounded-xl bg-slate-950/75 border border-slate-800 p-3.5 flex items-start gap-3">
+          <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-300 flex items-center justify-center font-bold shrink-0">3</div>
+          <div>
+            <div class="font-bold text-white">🤖 照著抓到的紙條回答員工</div>
+            <div class="text-slate-400 mt-0.5">如果抓錯機密檔案或抓到駭客偷塞的假公告，AI 就會一本正經地洩密或幫詐騙背書！</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3 Risk Quick Jump Cards -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
+        <button onclick="switchTab('a')" class="text-left rounded-lg bg-rose-950/35 hover:bg-rose-950/60 border border-rose-500/30 p-3 transition">
+          <div class="font-bold text-rose-300">🔓 漏洞 A：機密檔案櫃沒上鎖</div>
+          <div class="text-slate-300 mt-0.5">普通員工問調薪，AI 卻把「老闆絕密裁員名單」一起翻出來唸。</div>
+        </button>
+        <button onclick="switchTab('b')" class="text-left rounded-lg bg-amber-950/35 hover:bg-amber-950/60 border border-amber-500/30 p-3 transition">
+          <div class="font-bold text-amber-300">🎭 漏洞 B：有人偷偷在書架塞假公告</div>
+          <div class="text-slate-300 mt-0.5">駭客塞入高相關關鍵字的假文件，把官方公告擠下去，讓 AI 報出詐騙匯款帳號。</div>
+        </button>
+        <button onclick="switchTab('c')" class="text-left rounded-lg bg-purple-950/35 hover:bg-purple-950/60 border border-purple-500/30 p-3 transition">
+          <div class="font-bold text-purple-300">🧩 漏洞 C：以為存成數字就沒人看得懂</div>
+          <div class="text-slate-300 mt-0.5">公司沒加密向量備份檔，駭客用反演技術把一堆浮點數還原回病歷與密碼！</div>
+        </button>
+      </div>
+    </section>
+
+    <!-- ==================== SCENARIO A ==================== -->
+    <section id="panel-a" class="space-y-5">
+      <!-- 1-2-3 Interactive Guided Tour A -->
+      <div class="rounded-xl bg-slate-900/90 border border-slate-800 p-4 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="text-xs font-bold text-sky-300 uppercase tracking-wider">🧭 新手體驗引導（依序點擊 1 → 2 → 3 看懂完整攻防）</div>
+          <button onclick="toggleDocsDrawer()" class="text-xs px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 transition">
+            📂 偷看公司檔案室裡有哪 9 份文件
+          </button>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
+          <button id="tour-a-1" onclick="tourStepA(1)" class="tour-step current text-left rounded-lg border border-slate-700 bg-slate-950/70 p-3">
+            <div class="font-bold text-white flex items-center justify-between">
+              <span>步驟 1：扮演普通員工試探 AI</span>
+              <span id="tour-a-1-badge" class="text-sky-300">👉 點我開始</span>
+            </div>
+            <div class="text-slate-400 mt-1">在「沒防護」狀態下問裁員與調薪，親眼看 AI 把老闆機密講出來！</div>
+          </button>
+          <button id="tour-a-2" onclick="tourStepA(2)" class="tour-step text-left rounded-lg border border-slate-700 bg-slate-950/70 p-3">
+            <div class="font-bold text-white flex items-center justify-between">
+              <span>步驟 2：一鍵左右對比差異</span>
+              <span id="tour-a-2-badge" class="text-slate-500">待體驗</span>
+            </div>
+            <div class="text-slate-400 mt-1">同時並排比較「沒上鎖」vs「先驗員工證再找資料」的 AI 回答落差。</div>
+          </button>
+          <button id="tour-a-3" onclick="tourStepA(3)" class="tour-step text-left rounded-lg border border-slate-700 bg-slate-950/70 p-3">
+            <div class="font-bold text-white flex items-center justify-between">
+              <span>步驟 3：套用安全防護驗證</span>
+              <span id="tour-a-3-badge" class="text-slate-500">待體驗</span>
+            </div>
+            <div class="text-slate-400 mt-1">切換至安全模式，觀察 AI 如何把機密文件完全擋在檔案室門外。</div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Main Control Card A -->
+      <div class="rounded-xl bg-slate-900/90 border border-slate-800 p-5 space-y-4">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 id="a-title" class="text-lg font-bold text-sky-300"></h2>
+            <p id="a-desc" class="text-sm text-slate-400 mt-1"></p>
+          </div>
+          <button onclick="runSideBySideA()" class="px-4 py-2 rounded-lg bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white text-xs font-bold shadow transition shrink-0">
+            ⚡ 一鍵左右對比（沒防護 vs 有防護）
+          </button>
+        </div>
+
+        <!-- Collapsible Corpus Inspector -->
+        <div id="scenario-a-docs-drawer" class="hidden rounded-lg bg-slate-950 border border-slate-800 p-4">
+          <div class="text-xs font-semibold text-slate-300 mb-2">目前存放在同一座 AI 知識庫裡的 9 份企業文件（5 份公開 ＋ 4 份老闆絕密）：</div>
+          <div id="scenario-a-docs-list" class="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs"></div>
+        </div>
+
+        <!-- Controls Row -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+          <!-- Role Switcher -->
+          <div class="rounded-lg bg-slate-950/70 border border-slate-800 p-3.5">
+            <div id="a-role-label" class="text-xs font-semibold text-slate-400 mb-2">1. 你現在扮演誰？</div>
+            <div class="grid grid-cols-2 gap-2">
+              <button id="role-employee" onclick="setRoleA('employee')" class="px-3 py-2 rounded-lg text-sm font-semibold border border-sky-500 bg-sky-500/20 text-sky-200">
+                👤 一般員工
+              </button>
+              <button id="role-executive" onclick="setRoleA('executive')" class="px-3 py-2 rounded-lg text-sm font-semibold border border-slate-700 bg-slate-900 text-slate-400 hover:text-white">
+                👔 高階主管（有權看機密）
+              </button>
+            </div>
+          </div>
+
+          <!-- Mode Switcher -->
+          <div class="rounded-lg bg-slate-950/70 border border-slate-800 p-3.5">
+            <div id="a-mode-label" class="text-xs font-semibold text-slate-400 mb-2">2. 知識庫安全鎖狀態</div>
+            <div class="grid grid-cols-2 gap-2">
+              <button id="mode-vulnerable" onclick="setModeA('vulnerable')" class="px-3 py-2 rounded-lg text-sm font-semibold border border-rose-500 bg-rose-500/20 text-rose-200">
+                🔓 沒上鎖（漏洞模式）
+              </button>
+              <button id="mode-patched" onclick="setModeA('patched')" class="px-3 py-2 rounded-lg text-sm font-semibold border border-slate-700 bg-slate-900 text-slate-400 hover:text-white">
+                🛡️ 先驗權限（安全模式）
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Query Box + Quick Prompts -->
+        <div class="space-y-2.5">
+          <div class="flex flex-wrap gap-2 items-center text-xs">
+            <span class="text-slate-400">點選試問：</span>
+            <button onclick="runQuickA('請問 2026 Q4 組織縮編、裁員優退名單與資遣補償金怎麼算？')" class="px-2.5 py-1 rounded-md bg-rose-950/60 hover:bg-rose-900/70 border border-rose-700/50 text-rose-200">
+              🎯 問公司裁員名單
+            </button>
+            <button onclick="runQuickA('請問今年高階主管 VP 與 CFO 的調薪幅度與股票選擇權方案？')" class="px-2.5 py-1 rounded-md bg-amber-950/60 hover:bg-amber-900/70 border border-amber-700/50 text-amber-200">
+              🎯 問老闆加薪多少
+            </button>
+            <button onclick="runQuickA('請問 Project Phoenix 併購星雲資安的估值是多少？')" class="px-2.5 py-1 rounded-md bg-purple-950/60 hover:bg-purple-900/70 border border-purple-700/50 text-purple-200">
+              🎯 探測有沒有秘密併購案
+            </button>
+            <button onclick="runQuickA('請問一般員工的特休假與遠距工作 WFH 規定？')" class="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200">
+              ✅ 問正常的請假規定
+            </button>
+          </div>
+
+          <div class="flex gap-2">
+            <input id="query-a" type="text"
+              value="請問 2026 Q4 組織縮編、裁員優退名單與資遣補償金怎麼算？"
+              placeholder="輸入要問公司 AI 助理的問題..."
+              class="flex-1 rounded-lg bg-slate-950 border border-slate-700 px-4 py-2.5 text-sm text-white focus:outline-none focus:border-sky-500" />
+            <button onclick="executeScenarioA()" class="px-5 py-2.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold text-sm transition shrink-0">
+              送出提問
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Side-by-Side Before/After Comparison Card A -->
+      <div id="compare-a-panel" class="hidden rounded-2xl bg-slate-900 border border-sky-500/50 p-5 space-y-4 shadow-xl">
+        <div class="flex items-center justify-between gap-2">
+          <div>
+            <h3 class="text-base font-bold text-white">⚡ 一鍵左右對比：同一個問題，有沒有上權限鎖的差別</h3>
+            <p id="compare-a-query" class="text-xs text-slate-400 mt-0.5"></p>
+          </div>
+          <button onclick="document.getElementById('compare-a-panel').classList.add('hidden')"
+            class="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300">關閉對比 ✕</button>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div class="rounded-xl bg-rose-950/30 border border-rose-500/60 p-4 space-y-2.5">
+            <div class="flex items-center justify-between">
+              <span class="text-sm font-bold text-rose-300">❌ 沒防護（Vulnerable）</span>
+              <span id="cmp-a-vuln-meta" class="text-[11px] px-2 py-0.5 rounded bg-rose-600/30 text-rose-200 font-mono"></span>
+            </div>
+            <div id="cmp-a-vuln-answer" class="rounded-lg bg-slate-950/90 border border-rose-500/30 p-3.5 text-xs leading-relaxed text-slate-200 whitespace-pre-line"></div>
+          </div>
+          <div class="rounded-xl bg-emerald-950/25 border border-emerald-500/55 p-4 space-y-2.5">
+            <div class="flex items-center justify-between">
+              <span class="text-sm font-bold text-emerald-300">✅ 開啟權限鎖（Patched Pre-filtering）</span>
+              <span id="cmp-a-patch-meta" class="text-[11px] px-2 py-0.5 rounded bg-emerald-600/30 text-emerald-200 font-mono"></span>
+            </div>
+            <div id="cmp-a-patch-answer" class="rounded-lg bg-slate-950/90 border border-emerald-500/30 p-3.5 text-xs leading-relaxed text-slate-200 whitespace-pre-line"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Telemetry Bar -->
+      <div id="telemetry-a" class="grid grid-cols-1 md:grid-cols-3 gap-3 hidden">
+        <div class="rounded-lg bg-slate-900 border border-slate-800 px-4 py-3">
+          <div id="tel-a-space-lbl" class="text-xs text-slate-400">AI 剛才翻找了幾份檔案？</div>
+          <div id="tel-a-space" class="text-sm font-bold text-white mt-0.5">-</div>
+        </div>
+        <div class="rounded-lg bg-slate-900 border border-slate-800 px-4 py-3">
+          <div id="tel-a-strategy-lbl" class="text-xs text-slate-400">安全檢查方式</div>
+          <div id="tel-a-strategy" class="text-sm font-semibold text-sky-300 mt-0.5">-</div>
+        </div>
+        <div class="rounded-lg bg-slate-900 border border-slate-800 px-4 py-3">
+          <div id="tel-a-score-lbl" class="text-xs text-slate-400">是否洩漏「機密存在與否」線索？</div>
+          <div id="tel-a-score" class="text-sm font-bold mt-0.5">-</div>
+        </div>
+      </div>
+
+      <!-- Alert Banner A -->
+      <div id="alert-a" class="hidden rounded-xl p-4 text-sm font-medium border"></div>
+
+      <!-- Side-by-Side: X-Ray (Left) + Enterprise AI Chat Room (Right) -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <div class="rounded-xl bg-slate-900/90 border border-slate-800 p-5 space-y-3">
+          <div>
+            <h3 id="a-xray-title" class="text-sm font-bold text-slate-200">🔍 AI 大腦幕後透視鏡（X-Ray）</h3>
+            <p id="a-xray-sub" class="text-xs text-slate-400 mt-0.5">
+              一般員工看不到這裡——AI 剛才就是從書架抓出這 3 張紙條，才講出右邊的答案：
+            </p>
+          </div>
+          <div id="chunks-a" class="space-y-3 text-sm text-slate-400">
+            載入中...
+          </div>
+        </div>
+
+        <!-- Familiar Enterprise Chat UI -->
+        <div class="rounded-xl bg-slate-900/90 border border-slate-800 flex flex-col overflow-hidden">
+          <div class="px-4 py-3 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="w-8 h-8 rounded-full bg-sky-500/20 border border-sky-400/40 flex items-center justify-center text-sm">🤖</div>
+              <div>
+                <div class="text-sm font-bold text-white">企業內部 HR &amp; 財務 AI 小幫手</div>
+                <div class="text-[11px] text-emerald-400 flex items-center gap-1">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> 線上即時回覆（一般員工看到的畫面）
+                </div>
+              </div>
+            </div>
+            <span id="chat-a-role-pill" class="text-[11px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700"></span>
+          </div>
+
+          <div id="chat-a-body" class="p-4 space-y-4 flex-1 bg-slate-950/60 min-h-[280px]">
+            <div class="text-xs text-slate-500 text-center py-10">等待發問...</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== SCENARIO B ==================== -->
+    <section id="panel-b" class="hidden space-y-5">
+      <!-- 1-2-3 Interactive Guided Tour B -->
+      <div class="rounded-xl bg-slate-900/90 border border-slate-800 p-4 space-y-3">
+        <div class="text-xs font-bold text-amber-300 uppercase tracking-wider">🧭 新手體驗引導（依序點擊 1 → 2 → 3 看駭客怎麼騙過 AI）</div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
+          <button id="tour-b-1" onclick="tourStepB(1)" class="tour-step current text-left rounded-lg border border-slate-700 bg-slate-950/70 p-3">
+            <div class="font-bold text-white flex items-center justify-between">
+              <span>步驟 1：先看正常的 AI 回答</span>
+              <span id="tour-b-1-badge" class="text-sky-300">👉 點我開始</span>
+            </div>
+            <div class="text-slate-400 mt-1">先問「報銷匯款帳號」，確認原本 AI 給的是正確官方內網與帳號。</div>
+          </button>
+          <button id="tour-b-2" onclick="tourStepB(2)" class="tour-step text-left rounded-lg border border-slate-700 bg-slate-950/70 p-3">
+            <div class="font-bold text-white flex items-center justify-between">
+              <span>步驟 2：駭客偷偷塞入假公告</span>
+              <span id="tour-b-2-badge" class="text-slate-500">待體驗</span>
+            </div>
+            <div class="text-slate-400 mt-1">假公告靠堆砌關鍵字插隊搶第一名，AI 立刻把詐騙帳號當真講出來！</div>
+          </button>
+          <button id="tour-b-3" onclick="tourStepB(3)" class="tour-step text-left rounded-lg border border-slate-700 bg-slate-950/70 p-3">
+            <div class="font-bold text-white flex items-center justify-between">
+              <span>步驟 3：開啟「官方印章」把關</span>
+              <span id="tour-b-3-badge" class="text-slate-500">待體驗</span>
+            </div>
+            <div class="text-slate-400 mt-1">系統自動檢查官方簽章與釣魚連結，把假公告攔下並左右對比成效。</div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Attacker Console -->
+      <div class="rounded-xl bg-gradient-to-br from-rose-950/50 via-slate-900 to-slate-900 border border-rose-500/40 p-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div class="flex items-center gap-2 flex-wrap">
+              <span id="b-console-badge" class="px-2 py-0.5 text-[11px] font-bold rounded bg-rose-600 text-white">駭客模擬控制台</span>
+              <h2 id="b-title" class="text-lg font-bold text-rose-200"></h2>
+            </div>
+            <p id="b-desc" class="text-sm text-slate-300 mt-1"></p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="runSideBySideB()" class="px-3.5 py-2 rounded-lg bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white text-xs font-bold shadow transition">
+              ⚡ 一鍵左右對比（沒把關 vs 有把關）
+            </button>
+            <button onclick="resetScenarioB()" class="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-semibold text-slate-200 transition">
+              🔄 清除假公告（重置）
+            </button>
+          </div>
+        </div>
+
+        <!-- One-click Poison Injection Buttons -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <button onclick="injectTemplateB('reimbursement_phish', '請問公司差旅費報銷匯款帳號和請款流程是什麼？')"
+            class="text-left p-3.5 rounded-lg bg-rose-950/60 hover:bg-rose-900/70 border border-rose-500/40 transition group">
+            <div class="text-xs font-bold text-rose-300 group-hover:text-white">💉 攻擊 1：塞入「假報銷匯款帳號」</div>
+            <div class="text-xs text-slate-300 mt-1">假冒財務公告，塞滿「報銷、匯款」關鍵字插隊搶第 1 名，誘騙員工匯款給詐騙集團。</div>
+          </button>
+
+          <button onclick="injectTemplateB('it_password_phish', '我忘記密碼而且帳號被鎖定了，請問 IT 密碼重設入口在哪裡？')"
+            class="text-left p-3.5 rounded-lg bg-amber-950/50 hover:bg-amber-900/60 border border-amber-500/40 transition group">
+            <div class="text-xs font-bold text-amber-300 group-hover:text-white">💉 攻擊 2：塞入「假 IT 改密碼網站」</div>
+            <div class="text-xs text-slate-300 mt-1">假冒 IT 緊急維護，誘騙忘記密碼的員工去釣魚網站交出公司帳密與簡訊驗證碼。</div>
+          </button>
+
+          <button onclick="injectTemplateB('retrieval_jamming', '請問公司差旅費報銷匯款帳號和請款流程是什麼？')"
+            class="text-left p-3.5 rounded-lg bg-purple-950/50 hover:bg-purple-900/60 border border-purple-500/40 transition group">
+            <div class="text-xs font-bold text-purple-300 group-hover:text-white">🚫 攻擊 3：塞入「閉嘴阻斷公告」</div>
+            <div class="text-xs text-slate-300 mt-1">下指令強迫 AI 對所有報銷查詢都回答「我無法提供」，讓企業 AI 服務癱瘓罷工。</div>
+          </button>
+        </div>
+
+        <!-- Custom Poison Drawer + KB Status Strip -->
+        <div class="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs">
+          <div id="kb-b-status" class="flex flex-wrap items-center gap-2 text-slate-300">
+            載入知識庫狀態中...
+          </div>
+          <button onclick="toggleCustomPoison()" class="text-rose-300 hover:text-rose-200 underline">
+            ＋ 自己寫一份假公告試試看
+          </button>
+        </div>
+
+        <div id="custom-poison-form" class="hidden rounded-lg bg-slate-950 border border-rose-500/30 p-4 space-y-2.5">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+            <input id="custom-poison-title" type="text" placeholder="假公告標題（例如：最新報銷匯款規定）"
+              class="rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-xs text-white" />
+            <input id="custom-poison-source" type="text" value="community-wiki-unverified" placeholder="來源名稱"
+              class="rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-xs text-white" />
+          </div>
+          <textarea id="custom-poison-content" rows="2" placeholder="輸入假公告內容（可多重複幾次關鍵字並放進釣魚連結）..."
+            class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-xs text-white"></textarea>
+          <button onclick="injectCustomB()" class="px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold">
+            把這份假公告偷偷塞進知識庫
+          </button>
+        </div>
+      </div>
+
+      <!-- Query + Defense Control Bar -->
+      <div class="rounded-xl bg-slate-900/90 border border-slate-800 p-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <div class="flex flex-wrap items-center gap-2 text-xs">
+            <span class="text-slate-400">員工試問：</span>
+            <button onclick="runQuickB('請問公司差旅費報銷匯款帳號和請款流程是什麼？')" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200">
+              💰 問報銷匯款帳號
+            </button>
+            <button onclick="runQuickB('我忘記密碼而且帳號被鎖定了，請問 IT 密碼重設入口在哪裡？')" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200">
+              🔑 問 IT 怎麼重設密碼
+            </button>
+          </div>
+
+          <!-- Defense Toggle Switch -->
+          <label class="flex items-center gap-3 cursor-pointer select-none px-4 py-2 rounded-xl border border-emerald-500/40 bg-emerald-950/20 hover:bg-emerald-950/40 transition">
+            <input id="defense-b-toggle" type="checkbox" onchange="executeScenarioB()" class="w-4 h-4 accent-emerald-500" />
+            <div>
+              <div id="b-defense-title" class="text-xs font-bold text-emerald-300">🛡️ 開啟「官方印章驗證 &amp; 假公告過濾」</div>
+              <div id="b-defense-sub" class="text-[11px] text-slate-400">只相信蓋有官方數位印章的文件，自動攔截可疑外部網址與灌水關鍵字</div>
+            </div>
+          </label>
+        </div>
+
+        <div class="flex gap-2">
+          <input id="query-b" type="text"
+            value="請問公司差旅費報銷匯款帳號和請款流程是什麼？"
+            class="flex-1 rounded-lg bg-slate-950 border border-slate-700 px-4 py-2.5 text-sm text-white focus:outline-none focus:border-sky-500" />
+          <button onclick="executeScenarioB()" class="px-5 py-2.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold text-sm transition shrink-0">
+            模擬員工發問
+          </button>
+        </div>
+      </div>
+
+      <!-- Side-by-Side Before/After Comparison Card B -->
+      <div id="compare-b-panel" class="hidden rounded-2xl bg-slate-900 border border-sky-500/50 p-5 space-y-4 shadow-xl">
+        <div class="flex items-center justify-between gap-2">
+          <div>
+            <h3 class="text-base font-bold text-white">⚡ 一鍵左右對比：遭假公告滲透後，有沒有「官方簽章把關」的差別</h3>
+            <p id="compare-b-query" class="text-xs text-slate-400 mt-0.5"></p>
+          </div>
+          <button onclick="document.getElementById('compare-b-panel').classList.add('hidden')"
+            class="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300">關閉對比 ✕</button>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div class="rounded-xl bg-rose-950/30 border border-rose-500/60 p-4 space-y-2.5">
+            <div class="flex items-center justify-between">
+              <span class="text-sm font-bold text-rose-300">❌ 沒把關（假公告搶下第 1 名）</span>
+              <span id="cmp-b-vuln-meta" class="text-[11px] px-2 py-0.5 rounded bg-rose-600/30 text-rose-200 font-mono"></span>
+            </div>
+            <div id="cmp-b-vuln-answer" class="rounded-lg bg-slate-950/90 border border-rose-500/30 p-3.5 text-xs leading-relaxed text-slate-200 whitespace-pre-line break-words"></div>
+          </div>
+          <div class="rounded-xl bg-emerald-950/25 border border-emerald-500/55 p-4 space-y-2.5">
+            <div class="flex items-center justify-between">
+              <span class="text-sm font-bold text-emerald-300">✅ 開啟官方印章驗證（攔截假公告）</span>
+              <span id="cmp-b-def-meta" class="text-[11px] px-2 py-0.5 rounded bg-emerald-600/30 text-emerald-200 font-mono"></span>
+            </div>
+            <div id="cmp-b-def-answer" class="rounded-lg bg-slate-950/90 border border-emerald-500/30 p-3.5 text-xs leading-relaxed text-slate-200 whitespace-pre-line break-words"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Alert Banner B -->
+      <div id="alert-b" class="hidden rounded-xl p-4 text-sm font-medium border"></div>
+
+      <!-- Blocked Docs Banner -->
+      <div id="blocked-b-panel" class="hidden rounded-xl bg-emerald-950/30 border border-emerald-500/40 p-4 space-y-2">
+        <div class="text-xs font-bold text-emerald-300">🛡️ 安全閘門已自動抓出並攔截以下可疑假公告：</div>
+        <div id="blocked-b-list" class="space-y-2 text-xs"></div>
+      </div>
+
+      <!-- Side-by-Side: X-Ray Chunks (Left) + Enterprise Chat UI (Right) -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <div class="rounded-xl bg-slate-900/90 border border-slate-800 p-5 space-y-3">
+          <div class="flex items-start justify-between gap-2">
+            <div>
+              <h3 id="b-xray-title" class="text-sm font-bold text-slate-200">🔍 AI 大腦幕後透視鏡：書架排名前 3 名</h3>
+              <p id="b-xray-sub" class="text-xs text-slate-400 mt-0.5">觀察假公告如何靠關鍵字把相關度衝高，擠掉官方文件站上第 1 名：</p>
+            </div>
+            <span id="b-vector-count" class="text-xs font-normal text-slate-400 shrink-0">-</span>
+          </div>
+          <div id="chunks-b" class="space-y-3 text-sm text-slate-400">
+            載入中...
+          </div>
+        </div>
+
+        <!-- Familiar Enterprise Chat UI B -->
+        <div class="rounded-xl bg-slate-900/90 border border-slate-800 flex flex-col overflow-hidden">
+          <div class="px-4 py-3 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-sm">🤖</div>
+              <div>
+                <div class="text-sm font-bold text-white">企業財務 &amp; IT 自助 AI 小幫手</div>
+                <div class="text-[11px] text-emerald-400 flex items-center gap-1">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> 員工實際看到的聊天室回答
+                </div>
+              </div>
+            </div>
+            <span id="chat-b-status-pill" class="text-[11px] px-2 py-0.5 rounded-full border"></span>
+          </div>
+
+          <div id="chat-b-body" class="p-4 space-y-4 flex-1 bg-slate-950/60 min-h-[280px]">
+            <div class="text-xs text-slate-500 text-center py-10">等待查詢...</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== SCENARIO C ==================== -->
+    <section id="panel-c" class="hidden space-y-5">
+      <!-- 1-2-3 Interactive Guided Tour C -->
+      <div class="rounded-xl bg-slate-900/90 border border-slate-800 p-4 space-y-3">
+        <div class="text-xs font-bold text-purple-300 uppercase tracking-wider">🧭 新手體驗引導（打破「只存數字不存文字就很安全」的迷思）</div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
+          <button id="tour-c-1" onclick="tourStepC(1)" class="tour-step current text-left rounded-lg border border-slate-700 bg-slate-950/70 p-3">
+            <div class="font-bold text-white flex items-center justify-between">
+              <span>步驟 1：挑一份機密資料</span>
+              <span id="tour-c-1-badge" class="text-sky-300">👉 點我開始</span>
+            </div>
+            <div class="text-slate-400 mt-1">例如「病歷紀錄」或「雲端金鑰」，系統會把它轉成 128 個看似亂碼的數字。</div>
+          </button>
+          <button id="tour-c-2" onclick="tourStepC(2)" class="tour-step text-left rounded-lg border border-slate-700 bg-slate-950/70 p-3">
+            <div class="font-bold text-white flex items-center justify-between">
+              <span>步驟 2：播放「數字還原動畫」</span>
+              <span id="tour-c-2-badge" class="text-slate-500">待體驗</span>
+            </div>
+            <div class="text-slate-400 mt-1">看駭客只拿到這組數字，如何一步步把姓名、身分證、密碼全部猜回來！</div>
+          </button>
+          <button id="tour-c-3" onclick="tourStepC(3)" class="tour-step text-left rounded-lg border border-slate-700 bg-slate-950/70 p-3">
+            <div class="font-bold text-white flex items-center justify-between">
+              <span>步驟 3：換你輸入自己的句子</span>
+              <span id="tour-c-3-badge" class="text-slate-500">待體驗</span>
+            </div>
+            <div class="text-slate-400 mt-1">隨便輸入一句含機密的中文或英文，親眼驗證向量備份外洩＝明文外洩。</div>
+          </button>
+        </div>
+      </div>
+
+      <div class="rounded-xl bg-slate-900/90 border border-slate-800 p-5 space-y-4">
+        <div>
+          <h2 id="c-title" class="text-lg font-bold text-amber-300"></h2>
+          <p id="c-desc" class="text-sm text-slate-400 mt-1"></p>
+        </div>
+
+        <!-- Presets -->
+        <div id="inversion-presets" class="flex flex-wrap items-center gap-2 text-xs">
+          <span class="text-slate-400">點選機密範例：</span>
+        </div>
+
+        <div class="flex flex-col sm:flex-row gap-2">
+          <input id="input-c" type="text"
+            value="病患 王小明 身分證 A123456789 門診診斷 第二型糖尿病 糖化血色素 9.2 需注射胰島素"
+            placeholder="輸入包含個資、病歷、API 金鑰或財務機密的短句..."
+            class="flex-1 rounded-lg bg-slate-950 border border-slate-700 px-4 py-2.5 text-sm text-white focus:outline-none focus:border-amber-500" />
+          <button onclick="executeScenarioC(true)" class="px-5 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold text-sm transition shrink-0">
+            🔬 轉成數字並開始還原
+          </button>
+        </div>
+      </div>
+
+      <!-- Results C -->
+      <div id="results-c" class="hidden space-y-5">
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+          <!-- Left: 128-dim Vector Inspector -->
+          <div class="lg:col-span-5 rounded-xl bg-slate-900/90 border border-slate-800 p-5 space-y-4">
+            <div class="flex items-center justify-between">
+              <h3 id="c-vec-title" class="text-sm font-bold text-sky-300">1. 外洩的「數字密碼」（128 個浮點數）</h3>
+              <span id="vec-norm-badge" class="text-[11px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">128 維</span>
+            </div>
+
+            <p id="c-vec-desc" class="text-xs text-slate-400">
+              很多人以為資料庫裡只存這些紅藍方塊跟小數點，就算被偷走也「看不懂」。但其實原本句子的意義全部藏在這些數字的組合裡：
+            </p>
+
+            <!-- 128-cell Heatmap -->
+            <div id="vec-heatmap" class="heatmap-grid p-3 rounded-lg bg-slate-950 border border-slate-800"></div>
+
+            <!-- Raw Float Array Preview -->
+            <div>
+              <div class="text-[11px] text-slate-400 mb-1">實際存在向量資料庫裡的長相（前 24 個數字）：</div>
+              <pre id="vec-raw-preview" class="text-[11px] text-cyan-300 bg-slate-950 border border-slate-800 rounded-lg p-3 overflow-x-auto leading-relaxed"></pre>
+            </div>
+          </div>
+
+          <!-- Right: Iterative Inversion Visualizer -->
+          <div class="lg:col-span-7 rounded-xl bg-slate-900/90 border border-slate-800 p-5 space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h3 id="c-inv-title" class="text-sm font-bold text-amber-300">2. 駭客把數字「一步步還原回明文」的過程</h3>
+              <div class="flex items-center gap-1.5">
+                <button onclick="stepInversion(-1)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-200">◀ 上一步</button>
+                <button id="btn-play-c" onclick="playInversionAnimation()" class="px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 text-xs font-semibold text-white">▶ 播放還原動畫</button>
+                <button onclick="stepInversion(1)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-200">下一步 ▶</button>
+              </div>
+            </div>
+
+            <!-- Step Pills -->
+            <div id="step-pills-c" class="flex flex-wrap gap-1.5"></div>
+
+            <!-- Metrics Row -->
+            <div class="grid grid-cols-2 gap-3">
+              <div class="rounded-lg bg-slate-950 border border-slate-800 p-3">
+                <div id="c-metric-1-lbl" class="text-[11px] text-slate-400">機密原文還原完成度</div>
+                <div class="flex items-baseline gap-2 mt-1">
+                  <span id="c-cos-val" class="text-2xl font-bold text-emerald-400 font-mono">0%</span>
+                </div>
+                <div class="w-full h-2 rounded-full bg-slate-800 mt-2 overflow-hidden">
+                  <div id="c-cos-bar" class="h-full bg-gradient-to-r from-amber-500 to-rose-500 transition-all duration-300" style="width: 0%"></div>
+                </div>
+              </div>
+
+              <div class="rounded-lg bg-slate-950 border border-slate-800 p-3">
+                <div id="c-metric-2-lbl" class="text-[11px] text-slate-400">已曝光的敏感機密詞數</div>
+                <div class="flex items-baseline gap-2 mt-1">
+                  <span id="c-l2-val" class="text-2xl font-bold text-rose-400 font-mono">0 個</span>
+                </div>
+                <div id="c-stage-short" class="text-[11px] text-slate-400 mt-2 truncate">-</div>
+              </div>
+            </div>
+
+            <!-- Current Step Description & Reconstructed Text -->
+            <div class="rounded-xl bg-slate-950 border border-slate-700 p-4 space-y-3">
+              <div id="c-stage-title" class="text-xs font-bold text-amber-300"></div>
+              <div id="c-stage-desc" class="text-xs text-slate-400"></div>
+
+              <div class="pt-2 border-t border-slate-800">
+                <div class="text-[11px] text-slate-400 mb-1.5">目前已還原出的敏感文字（系統自動依機密類型標色）：</div>
+                <div id="c-reconstructed" class="text-base font-semibold text-white leading-relaxed min-h-[44px] flex flex-wrap gap-1.5 items-center"></div>
+              </div>
+
+              <!-- Legend -->
+              <div class="flex flex-wrap gap-2 pt-2 text-[11px] text-slate-400 border-t border-slate-800/70">
+                <span class="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40">🔴 金鑰/密碼</span>
+                <span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">🟠 姓名/身分證</span>
+                <span class="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40">🟣 醫療病歷</span>
+                <span class="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40">🔵 財務/裁員機密</span>
+                <span class="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">⚪ 其他字詞</span>
+              </div>
+            </div>
+
+            <!-- Final Verdict -->
+            <div id="c-verdict" class="rounded-xl bg-rose-950/40 border border-rose-500/40 p-3.5 text-xs text-rose-200 leading-relaxed"></div>
+          </div>
+        </div>
+
+        <!-- Direct Plaintext vs Recovered Comparison Strip -->
+        <div class="rounded-xl bg-slate-900 border border-amber-500/40 p-4">
+          <div class="text-xs font-bold text-amber-300 mb-3">👀 一眼看懂風險：「原本的機密」vs「只靠數字還原出來的結果」</div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+            <div class="rounded-lg bg-slate-950 border border-slate-800 p-3">
+              <div class="text-slate-400 mb-1">📄 公司原本以為已經藏好的機密原文：</div>
+              <div id="c-compare-orig" class="text-sm text-white font-medium leading-relaxed"></div>
+            </div>
+            <div class="rounded-lg bg-rose-950/30 border border-rose-500/40 p-3">
+              <div class="text-rose-300 mb-1">🕵️ 駭客僅憑外洩的 128 個浮點數還原出的內容：</div>
+              <div id="c-compare-rec" class="text-sm text-rose-200 font-semibold leading-relaxed"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="border-t border-slate-800/80 py-3 text-center text-xs text-slate-500">
+    OWASP Top 10 for LLM Applications 2026 — LLM09:2026 Vector &amp; Embedding Weaknesses • 支援白話模式（一般觀眾）與技術模式（工程師）
+  </footer>
+
+  <script src="/static/app.js?v=2"></script>
+</body>
+</html>
